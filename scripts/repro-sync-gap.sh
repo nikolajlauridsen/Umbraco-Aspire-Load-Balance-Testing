@@ -12,17 +12,29 @@ DELAY_MS="${2:-3000}"
 A=http://localhost:5001   # writer
 B=http://localhost:5002   # reader
 
-ids=$(curl -sf "$A/umbraco/lb/ids?count=40" | python3 -c "import json,sys; print(' '.join(map(str, json.load(sys.stdin)['ids'])))")
+fetch() {
+  local body
+  if ! body=$(curl -sf "$1"); then
+    echo "ERROR: GET $1 failed: $(curl -s "$1" | head -c 300)" >&2
+    exit 1
+  fi
+  echo "$body"
+}
+
+ids=$(fetch "$A/umbraco/lb/ids?count=40" | python3 -c "import json,sys; print(' '.join(map(str, json.load(sys.stdin)['ids'])))")
 read -r -a IDS <<< "$ids"
 
-title() { curl -sf "$1/umbraco/lb/get/$2" | python3 -c "import json,sys; print(json.load(sys.stdin)['title'])"; }
+title() { fetch "$1/umbraco/lb/get/$2" | python3 -c "import json,sys; print(json.load(sys.stdin)['title'])"; }
 
 # Waits until node B returns the same title as the database (read through node A after its own save),
-# printing how long that took.
+# printing how long that took, or "over 120" if it never did.
 converge() {
-  local id=$1 expected=$2 start=$(date +%s.%N)
-  while [ "$(title "$B" "$id")" != "$expected" ]; do sleep 0.25; done
-  python3 -c "print(f'{$(date +%s.%N) - $start:.1f}')"
+  local id=$1 expected=$2 start=$(date +%s)
+  while [ "$(title "$B" "$id")" != "$expected" ]; do
+    [ $(( $(date +%s) - start )) -ge 120 ] && { echo "over 120"; return; }
+    sleep 0.25
+  done
+  echo "$(( $(date +%s) - start ))"
 }
 
 run() {

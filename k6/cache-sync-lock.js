@@ -74,9 +74,9 @@ export const options = {
 };
 
 export function setup() {
-  const seed = http.post(`${NODES[0]}/lb/seed?branches=${BRANCHES}&perBranch=${PER_BRANCH}`, null, { timeout: '15m' });
+  const seed = http.post(`${NODES[0]}/umbraco/lb/seed?branches=${BRANCHES}&perBranch=${PER_BRANCH}`, null, { timeout: '15m' });
   if (seed.status !== 200) throw new Error(`seed failed: ${seed.status} ${seed.body}`);
-  const tree = http.get(`${NODES[0]}/lb/tree`);
+  const tree = http.get(`${NODES[0]}/umbraco/lb/tree`);
   if (tree.status !== 200) throw new Error(`tree failed: ${tree.status} ${tree.body}`);
 
   const branches = tree.json().branches;
@@ -119,13 +119,13 @@ export function editor(data) {
   const id = pages[Math.floor(Math.random() * pages.length)];
   const base = target();
 
-  const save = http.post(`${base}/lb/save/${id}`, null, { tags: { action: 'save' } });
+  const save = http.post(`${base}/umbraco/lb/save/${id}`, null, { tags: { action: 'save' } });
   record(save);
   check(save, { 'save 200': (r) => r.status === 200 });
 
   think();
 
-  const publish = http.post(`${base}/lb/publish/${id}`, null, { tags: { action: 'publish' } });
+  const publish = http.post(`${base}/umbraco/lb/publish/${id}`, null, { tags: { action: 'publish' } });
   record(publish);
   check(publish, { 'publish 200': (r) => r.status === 200 });
 
@@ -140,7 +140,7 @@ export function editor(data) {
 
 export function bulk(data) {
   const branch = data.bulkBranches[Math.floor(Math.random() * data.bulkBranches.length)];
-  const res = http.post(`${GATEWAY}/lb/publish-branch/${branch}`, null, { timeout: '5m', tags: { action: 'publish-branch' } });
+  const res = http.post(`${GATEWAY}/umbraco/lb/publish-branch/${branch}`, null, { timeout: '5m', tags: { action: 'publish-branch' } });
   record(res);
   check(res, { 'publish-branch 200': (r) => r.status === 200 });
   sleep(1);

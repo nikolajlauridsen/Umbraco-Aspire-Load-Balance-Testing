@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.DataProtection;
 using StackExchange.Redis;
+using Umbraco.Cms.Core.Routing;
 using Umbraco.Cms.Infrastructure.DependencyInjection;
 using Umbraco.LbSite.Rig;
 
@@ -16,6 +17,12 @@ builder.CreateUmbracoBuilder()
     .LoadBalanceIsolatedCaches()
     .SetServerRegistrar(new EnvironmentServerRoleAccessor(builder.Configuration))
     .Build();
+
+// The rig endpoints stand in for backoffice (Management API) calls. Umbraco only runs the inline
+// isolated-cache sync for backoffice requests, and /umbraco/lb/{action}/{id} would otherwise be treated
+// as a front-end plugin controller route.
+builder.Services.Configure<UmbracoRequestPathsOptions>(options =>
+    options.IsBackOfficeRequest = path => path.StartsWith("/umbraco/lb/", StringComparison.OrdinalIgnoreCase));
 
 IConnectionMultiplexer redis = ConnectionMultiplexer.Connect(redisConnection);
 builder.Services.AddSingleton(redis);

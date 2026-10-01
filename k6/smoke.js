@@ -31,7 +31,7 @@ export const options = {
 };
 
 export default function () {
-  const res = http.get(`${GATEWAY}/lb/status`);
+  const res = http.get(`${GATEWAY}/umbraco/lb/status`);
   check(res, { 'status 200': (r) => r.status === 200 });
   const node = res.headers['X-Umb-Node'];
   if (node) {

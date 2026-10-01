@@ -20,7 +20,7 @@ namespace Umbraco.LbSite.Rig;
 [AllowAnonymous]
 [IgnoreAntiforgeryToken]
 [RigExceptionFilter]
-[Route("lb")]
+[Route("umbraco/lb")]
 public sealed class LbController : ControllerBase
 {
     private const string PageAlias = "lbPage";
@@ -119,7 +119,7 @@ public sealed class LbController : ControllerBase
         IContentType? contentType = _contentTypeService.Get(PageAlias);
         if (contentType is null)
         {
-            return NotFound(new { error = $"Document type '{PageAlias}' does not exist; POST /lb/seed first." });
+            return NotFound(new { error = $"Document type '{PageAlias}' does not exist; POST /umbraco/lb/seed first." });
         }
 
         int[] ids = _contentService
@@ -143,7 +143,7 @@ public sealed class LbController : ControllerBase
         IContent? root = FindRoot();
         if (root is null)
         {
-            return NotFound(new { error = "No tree; POST /lb/seed first." });
+            return NotFound(new { error = "No tree; POST /umbraco/lb/seed first." });
         }
 
         var branches = Children(root.Id)

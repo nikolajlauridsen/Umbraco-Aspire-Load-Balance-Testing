@@ -63,7 +63,7 @@ for (int i = 1; i <= nodeCount; i++)
         .WithEnvironment("Umbraco__CMS__Unattended__UnattendedUserName", "LB Admin")
         .WithEnvironment("Umbraco__CMS__Unattended__UnattendedUserEmail", "admin@lb.local")
         .WithEnvironment("Umbraco__CMS__Unattended__UnattendedUserPassword", "LoadBalance-Admin-1234!")
-        .WithHttpHealthCheck("/lb/status")
+        .WithHttpHealthCheck("/umbraco/lb/status")
         .WithUrl(string.Concat("http://localhost:", port.ToString(), "/umbraco"), $"{name} backoffice (direct)");
 
     if (nodes.Count > 0)

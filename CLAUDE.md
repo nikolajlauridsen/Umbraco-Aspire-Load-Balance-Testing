@@ -24,8 +24,14 @@ aspire logs umb-2                                       # node console logs (Ser
 aspire resource k6 start                                # k6 is WithExplicitStart
 aspire resource umb-2 restart
 
-scripts/pack-cms.sh /path/to/Umbraco-CMS                # pack a CMS checkout into ./packages, prints the version to use
+scripts/pack-cms.sh /path/to/Umbraco-CMS                # pack a CMS checkout into ./packages; last line VERSION=<v>
+scripts/run-scenario.sh <out-dir> <version> [k6-script] [--probe]   # one full run on one version, logs into out-dir
+scripts/run-probe.sh <run-dir>                          # only the sync-gap probe, against the running rig
+scripts/compare-runs.py --cms <checkout> a=<dir> b=<dir>  # markdown comparison of run dirs
 ```
+
+To verify a PR end to end, use the `verify-umbraco-pr` skill (`.claude/skills/verify-umbraco-pr/`). Results go in
+`results/` (git-ignored).
 
 There is no test project. Verification is the k6 scripts in `k6/` plus the `/umbraco/lb` endpoints;
 `scripts/repro-sync-gap.sh` probes the window between a save's cache-version bump and its cache instruction. Pick the

@@ -53,6 +53,21 @@ for a distributed lock timeout, so the two symptoms can be counted separately.
 The workflow is: get a baseline on the release the PR targets, pack the PR, run the same scenario on the
 PR build, and compare.
 
+**With Claude Code**, the `verify-umbraco-pr` skill in `.claude/skills/` does all of it. Ask "verify PR 24034,
+the CMS checkout is at ~/github/Umbraco-CMS" from this folder. It writes a report to
+`results/pr-<n>-<date>/report.md` (git-ignored).
+
+**By hand**, the scripts it uses:
+
+```bash
+scripts/pack-cms.sh <cms-checkout>                                   # prints VERSION=<pr-version>
+scripts/run-scenario.sh results/pr-123/baseline 17.7.0 --probe        # one side: boot, version check, k6, logs, probe
+scripts/run-scenario.sh results/pr-123/pr <pr-version> --probe
+scripts/compare-runs.py --cms <cms-checkout> baseline=results/pr-123/baseline pr=results/pr-123/pr
+```
+
+The steps below explain what those scripts do.
+
 ### 1. Baseline on the released version
 
 ```bash

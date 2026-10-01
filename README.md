@@ -32,14 +32,18 @@ a nuget.org release and a locally packed PR build, so a fix can be compared agai
 
 Every response carries an `X-Umb-Node` header naming the node that served it.
 
-The anonymous `/lb` endpoints on every node exist so k6 does not need backoffice auth:
+The anonymous `/umbraco/lb` endpoints on every node stand in for an editor's Management API calls, so k6 does
+not need backoffice auth. They are registered as backoffice requests (`UmbracoRequestPathsOptions` in
+`Umbraco.LbSite/Program.cs`). That matters: Umbraco only runs the inline isolated-cache sync for backoffice
+requests, and front-end requests rely on the background job alone.
 
 | Route | Does |
 |---|---|
-| `GET /lb/status` | node, role, runtime level, **CMS version**; 503 until the node is running (Aspire health check) |
-| `POST /lb/seed?branches=&perBranch=` | creates the `lbPage` type and an `LB Root` tree, publishes it; idempotent |
-| `GET /lb/tree`, `GET /lb/ids?count=` | seeded ids for k6 |
-| `POST /lb/save/{id}`, `/lb/publish/{id}`, `/lb/publish-branch/{id}`, `/lb/delete/{id}` | content operations via `IContentService` |
+| `GET /umbraco/lb/status` | node, role, runtime level, **CMS version**; 503 until the node is running (Aspire health check) |
+| `POST /umbraco/lb/seed?branches=&perBranch=` | creates the `lbPage` type and an `LB Root` tree, publishes it; idempotent |
+| `GET /umbraco/lb/tree`, `GET /umbraco/lb/ids?count=` | seeded ids for k6 |
+| `GET /umbraco/lb/get/{id}` | the document as this node's repository cache returns it (version ids, title) |
+| `POST /umbraco/lb/save/{id}`, `/umbraco/lb/publish/{id}`, `/umbraco/lb/publish-branch/{id}`, `/umbraco/lb/delete/{id}` | content operations via `IContentService` |
 
 Save and publish return **409** for a stale cached version ("Cannot save a non-current version") and **503**
 for a distributed lock timeout, so the two symptoms can be counted separately.
@@ -59,8 +63,8 @@ On first start `umb-1` performs an unattended install; the other nodes wait unti
 the rig itself:
 
 ```bash
-curl -s http://localhost:5001/lb/status     # "version" shows the CMS actually running
-for i in $(seq 1 6); do curl -s -o /dev/null -D - http://localhost:8080/lb/status | grep -i x-umb-node; done
+curl -s http://localhost:5001/umbraco/lb/status     # "version" shows the CMS actually running
+for i in $(seq 1 6); do curl -s -o /dev/null -D - http://localhost:8080/umbraco/lb/status | grep -i x-umb-node; done
 ```
 
 The second command should rotate `umb-1 umb-2 umb-3`. Start the `k6` resource (dashboard, or
@@ -98,7 +102,7 @@ aspire resource k6 start
 
 aspire stop
 UmbracoVersion=<packed version> Rig__K6Script=/scripts/cache-sync-lock.js aspire run --launch-profile http
-curl -s http://localhost:5001/lb/status     # confirm "version" is the packed build
+curl -s http://localhost:5001/umbraco/lb/status     # confirm "version" is the packed build
 # wait ~70 s, then:
 aspire resource k6 start
 ```
@@ -107,7 +111,7 @@ Wait about 70 seconds after boot before starting k6. Umbraco's background instru
 seconds after boot, and without it the cross-node sync under test is not running.
 
 `UmbracoVersion` only applies to builds made while the variable is set. A plain `aspire run` afterwards goes
-back to 17.7.0, so always confirm with `/lb/status`.
+back to 17.7.0, so always confirm with `/umbraco/lb/status`.
 
 ### 4. Compare
 
@@ -143,12 +147,21 @@ Knobs, passed as `Rig__K6Env__<NAME>=<value>` when starting the AppHost:
 | `DURATION` | 2m | |
 
 The seed only runs while no `LB Root` exists. To change the tree shape, trash the old root first:
-`curl -X POST http://localhost:5001/lb/delete/<rootId>`.
+`curl -X POST http://localhost:5001/umbraco/lb/delete/<rootId>`.
 
 Keep bulk publishes small. A single publish of a large branch holds the content-tree write lock for longer
 than the lowered lock timeout. Every version then times out, which hides the difference you are looking for.
 
-### 5. Manual checks
+### 5. Sync-gap probe
+
+`scripts/repro-sync-gap.sh [rounds] [delayMs]` checks whether a node can serve a stale cached document after
+another node's save. It saves on `umb-1` with the end of the request delayed by `delayMs`. Cache instructions are
+written at request end, so the delay widens the window between the cache version bump (committed with the save)
+and the instruction. Then it reads the document on `umb-2`. A `probe` round also reads an unrelated document on
+`umb-2` inside that window to force an inline sync there. Each round reports `fresh`, or `STALE` and how long
+`umb-2` took to catch up. With `delayMs=0` every round should be fresh.
+
+### 6. Manual checks
 
 Use the direct node ports to control which node serves each step. Each check is "do X on node A, then
 within 5 s do Y on node B":
@@ -158,7 +171,7 @@ within 5 s do Y on node B":
 - change a data type configuration on `umb-1`, save content using it on `umb-2`: the new configuration applies;
 - create a parent on `umb-1`, create a child under it on `umb-2`: tree and URL are correct;
 - through the gateway, keep a document open in the backoffice and save it via `umb-2` directly
-  (`curl -X POST http://localhost:5002/lb/save/<id>`): the "updated by another user" notification arrives,
+  (`curl -X POST http://localhost:5002/umbraco/lb/save/<id>`): the "updated by another user" notification arrives,
   whichever node the browser's WebSocket is on.
 
 Useful database views while testing: `umbracoLastSynced` has one row per node, and each node's synced id

@@ -157,8 +157,36 @@ public sealed class LbController : ControllerBase
         return Ok(new { rootId = root.Id, branches });
     }
 
+    /// <summary>
+    /// Reads a document through the repository cache on this node, as a save or publish would.
+    /// </summary>
+    [HttpGet("get/{id:int}")]
+    public IActionResult Get(int id)
+    {
+        IContent? content = _contentService.GetById(id);
+        if (content is null)
+        {
+            return NotFound();
+        }
+
+        return Ok(new
+        {
+            id,
+            node = NodeName,
+            versionId = content.VersionId,
+            publishedVersionId = content.PublishedVersionId,
+            title = content.GetValue<string>("title"),
+            updateDate = content.UpdateDate,
+        });
+    }
+
+    /// <param name="id">The document id.</param>
+    /// <param name="delayMs">
+    /// Delays the end of the request after the save has committed. Cache instructions are written at request end,
+    /// so this widens the window between the cache version bump and the instruction becoming visible to other nodes.
+    /// </param>
     [HttpPost("save/{id:int}")]
-    public IActionResult Save(int id)
+    public async Task<IActionResult> Save(int id, int delayMs = 0)
     {
         IContent? content = _contentService.GetById(id);
         if (content is null)
@@ -168,6 +196,11 @@ public sealed class LbController : ControllerBase
 
         content.SetValue("title", DateTime.UtcNow.ToString("O"));
         OperationResult result = _contentService.Save(content);
+        if (delayMs > 0)
+        {
+            await Task.Delay(delayMs);
+        }
+
         return Result(id, result.Success, result.Result.ToString());
     }
 

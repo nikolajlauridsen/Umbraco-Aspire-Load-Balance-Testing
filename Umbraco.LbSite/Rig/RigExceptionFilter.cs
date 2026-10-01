@@ -13,7 +13,14 @@ public sealed class RigExceptionFilterAttribute : ExceptionFilterAttribute
 {
     public override void OnException(ExceptionContext context)
     {
-        (int status, string error)? mapped = context.Exception switch
+        // Notification handlers run at scope exit wrap failures in (nested) AggregateExceptions.
+        Exception exception = context.Exception;
+        while (exception is AggregateException { InnerException: { } inner })
+        {
+            exception = inner;
+        }
+
+        (int status, string error)? mapped = exception switch
         {
             InvalidOperationException e when e.Message.Contains("non-current version") => (StatusCodes.Status409Conflict, "stale-version"),
             DistributedReadLockTimeoutException => (StatusCodes.Status503ServiceUnavailable, "read-lock-timeout"),
@@ -33,7 +40,7 @@ public sealed class RigExceptionFilterAttribute : ExceptionFilterAttribute
         {
             error = mapped.Value.error,
             node = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Rig:NodeName"],
-            message = context.Exception.Message,
+            message = exception.Message,
         })
         {
             StatusCode = mapped.Value.status,

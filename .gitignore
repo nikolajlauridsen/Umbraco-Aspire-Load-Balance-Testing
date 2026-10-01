@@ -1,0 +1,13 @@
+bin/
+obj/
+packages/*.nupkg
+packages/*.snupkg
+shared/
+logs/
+*.user
+.vs/
+.idea/
+Umbraco.LbSite/umbraco/
+Umbraco.LbSite/appsettings.Local.json
+Umbraco.LbSite/appsettings-schema*.json
+Umbraco.LbSite/umbraco-package-schema.json

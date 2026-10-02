@@ -93,3 +93,20 @@ Rig knobs (AppHost config, overridable as env vars `Rig__...`): `NodeCount` (3),
   migrations upgrades the schema; going back then needs the volume deleted. Check
   `git diff release-<old> <commit> -- src/Umbraco.Infrastructure/Migrations/` in the CMS checkout first.
 - `docs/` is git-ignored local working notes (plans, results); keep run results there, not in the repo.
+- Run one thing at a time. Nothing else may run on the machine during k6 or the probe (no builds, packing or
+  worktree checkouts); pack every version first with the rig stopped (three nodes plus SQL, Redis and a CMS pack
+  exceed the RAM), then run the sides back to back from one script.
+- Packing needs a commit: the version comes from the commit, and NuGet keeps serving the cached copy for a version
+  it has seen. Commit on a scratch branch and cherry-pick later if the user has not asked for a commit. Pack other
+  versions from a detached worktree (`git worktree add --detach <scratch>/cms-<name> <sha>`), never by switching the
+  user's checkout.
+- Windows / Git Bash: the scripts exclude `Rig__*` from MSYS path conversion and read files as UTF-8; keep that
+  when editing them. Node logs from `aspire logs` wrap long lines, so collapse whitespace before matching stacks.
+  Python's `write_text` writes CRLF on Windows; pass `newline="
+"` for anything that goes to GitHub.
+- Lock timeouts: the rig lowers only the read-lock timeout to 5 s. The 5 s write-lock timeout is the CMS default,
+  so write-lock timeouts in a run are production behaviour.
+- Known failure floor: on every build that includes PR 24034, 33-42 % of editor requests fail on the global
+  `DocumentUrlAliases` write lock (`DocumentUrlAliasService` takes it before loading the document, so the inline
+  sync runs under it). It is unrelated to cache sync and hides smaller effects; see the known findings in
+  `.claude/skills/verify-umbraco-pr/references/interpreting-results.md`.

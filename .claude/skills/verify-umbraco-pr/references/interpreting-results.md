@@ -5,7 +5,7 @@
 1. What the default scenario does
 2. Metrics
 3. Known pitfalls
-4. Known findings (as of 01-10-2026)
+4. Known findings (as of 02-10-2026)
 5. Adapting the scenario
 
 ## 1. What the default scenario does
@@ -70,20 +70,45 @@ k6's `/s` rates include setup time (the seed on a first run), so compare totals,
 - **Schema:** after a PR with migrations, the baseline can't boot on the upgraded database. The fix is
   deleting the `umbraco-lb-sql` volume, after asking.
 
-## 4. Known findings (as of 01-10-2026)
+## 4. Known findings (as of 02-10-2026)
 
 These were found while verifying PR 24034 (cache-sync lock ordering), with 17.7.0 as the baseline.
 
 Two runs each so far, so treat these as ranges, not exact values.
 
+Added 02-10-2026 from a back-to-back run of `v17/dev` (`fc10437`), PR 24034 (`51b2226`) and PR 24053 (`142fab7`
+and `c9192c6`), one run each, nothing else running:
+
+- **PR 24034 at `51b2226` fails 33-42 % of editor requests**, not the 7-10 % measured at `6117125` below. The
+  difference is not explained (both commits contain #23943; candidates are the branch's later commits, the newer
+  write-lock timeout mapping, a fresh seed). Treat 33-42 % as the current floor for every build that includes 24034.
+- **The floor is the `DocumentUrlAliases` write lock (-348)**, 1290-1488 timeouts per run, 0 on `v17/dev` where the
+  `ContentTree` deadlock fails everything first. `DocumentUrlAliasService.CreateOrUpdateAliasesAsync` queues the
+  global write lock and then calls `GetById`, so the lock is acquired at the first database access inside the inline
+  isolated-cache sync and held across the sync, the content load and the alias write (~120 ms per holder, ~8 per
+  second cluster-wide, 5 s write-lock timeout = the CMS default). 78-83 % of the failing stacks enter through
+  `RepositoryCacheVersionRepository.GetAllAsync`. The sibling `DocumentUrls` lock (-345), taken only right before its
+  save, had 0 timeouts. Pre-existing, also in 17.7.0, unrelated to cache sync; fix it before expecting this scenario
+  to show smaller sync effects.
+- **PR 24053 closes the probe gap**: `delay 3000 ms` rounds 0 of 10 stale on both 24053 builds, 9 of 10 on `v17/dev`,
+  10 of 10 on 24034. Load numbers equal 24034 within variance.
+- **PR 24053 at `c9192c6` keeps the scope-level version cache at the adopted snapshot** after a sync, so a root scope
+  syncs at most once per adopted snapshot. It changed no rig number (41.7 % failed, probe 0 stale).
+- Occasional `stale_version` 409s (0-2 per run on the PR builds) appear only in the heaviest contention buckets,
+  10-30 s after another node's publish; likely a sync that failed on a lock timeout. Not pinned down.
+- 24034's watchdog ("Cache instruction sync did not complete within 00:01:00") fired once on 24034; it is the alias
+  lock chain, not a hung connection.
+
+Earlier findings (01-10-2026, with 17.7.0 as the baseline):
+
 - **17.7.0 under the default scenario:** 88-96 % of editor requests fail, almost all on `ContentTree` lock
   timeouts. p95 is 9-16 s, and max reaches 55-60 s (60 s is k6's request timeout, so it's a ceiling). This is the
   deadlock PR 24034 targets. The nodes stay stuck for up to about a minute after k6 ends.
-- **PR 24034 at `6117125`:** 7-10 % fail, with no `ContentTree` read-lock timeouts. The largest group is `unmapped write-lock timeout on
+- **PR 24034 at `6117125`:** 7-10 % fail (not reproduced at `51b2226`, see above), with no `ContentTree` read-lock timeouts. The largest group is `unmapped write-lock timeout on
   DocumentUrlAliases`. A save's scope-exit handler (`DocumentUrlAliasService.CreateOrUpdateAliasesAsync`) holds
   that global write lock while `GetById` runs the inline sync. Unwrapped mapping was added afterwards, so newer
   runs count these as `rig write-lock-timeout`.
-- **Version-bump/instruction gap (pre-existing, also in 17.7.0):** the cache-version bump commits with the save,
+- **Version-bump/instruction gap (pre-existing, also in 17.7.0; fixed by PR 24053):** the cache-version bump commits with the save,
   but the cache instruction is written at request end. A sync on another node in between adopts the version
   without the instruction and serves stale data for up to about 10 s. The probe's `delay 3000 ms` rounds are
   stale on both versions until this is fixed.

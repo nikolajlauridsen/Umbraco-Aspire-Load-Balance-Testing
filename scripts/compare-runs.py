@@ -37,7 +37,7 @@ def lock_names(cms):
     if cms:
         path = pathlib.Path(cms) / "src/Umbraco.Core/Persistence/Constants-Locks.cs"
         if path.exists():
-            for name, value in re.findall(r"public const int (\w+) = (-\d+);", path.read_text()):
+            for name, value in re.findall(r"public const int (\w+) = (-\d+);", path.read_text(encoding="utf-8", errors="replace")):
                 names[int(value)] = name
     return names
 
@@ -80,7 +80,7 @@ def node_errors(run, names):
     """Counts failures per kind across all node logs, unwrapping AggregateExceptions to the innermost cause."""
     counts = collections.Counter()
     for log in sorted(run.glob("node-umb-*.log")):
-        lines = log.read_text(errors="replace").splitlines()
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
         for i, line in enumerate(lines):
             m = RIG.search(line)
             if m:
@@ -114,14 +114,14 @@ def probe_summary(run):
         return {}
     result = collections.defaultdict(collections.Counter)
     delay = "?"
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if line.startswith("## delayMs="):
             delay = line.split("=", 1)[1]
         m = PROBE.match(line)
         if m:
             result[f"delay {delay} ms, {m.group(1)}"][m.group(2)] += 1
     summary = {k: f"{v['STALE']} stale / {v['STALE'] + v['fresh']}" for k, v in result.items()}
-    if "Traceback" in path.read_text() or "ERROR" in path.read_text():
+    if "Traceback" in path.read_text(encoding="utf-8", errors="replace") or "ERROR" in path.read_text(encoding="utf-8", errors="replace"):
         summary["probe errors (see probe.txt)"] = "yes"
     return summary
 
@@ -129,7 +129,7 @@ def probe_summary(run):
 def versions(run):
     found = set()
     for status in run.glob("status-umb-*.json"):
-        m = re.search(r'"version":"([^"]+)"', status.read_text())
+        m = re.search(r'"version":"([^"]+)"', status.read_text(encoding="utf-8", errors="replace"))
         if m:
             found.add(m.group(1))
     return ", ".join(sorted(found)) or "unknown"
@@ -159,7 +159,7 @@ def main():
         labels.append(label)
         data[label] = {
             "version": versions(run),
-            "k6": k6_summary((run / "k6.txt").read_text(errors="replace")),
+            "k6": k6_summary((run / "k6.txt").read_text(encoding="utf-8", errors="replace")),
             "errors": node_errors(run, names),
             "probe": probe_summary(run),
         }

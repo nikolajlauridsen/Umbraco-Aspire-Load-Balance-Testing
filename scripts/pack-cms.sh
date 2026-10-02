@@ -12,6 +12,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/packages"
 mkdir -p "$OUT"
 
+# A fresh checkout has no GetBuildVersion target until Nerdbank.GitVersioning is restored.
+dotnet restore "$CHECKOUT/src/Umbraco.Core/Umbraco.Core.csproj" >/dev/null
+
 # PackageVersion, not NuGetPackageVersion: the build adds a prerelease suffix on top of the
 # Nerdbank.GitVersioning version, so ask with the same properties the build below uses.
 VERSION=$(dotnet msbuild "$CHECKOUT/src/Umbraco.Core/Umbraco.Core.csproj" \

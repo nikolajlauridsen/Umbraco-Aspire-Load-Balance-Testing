@@ -19,6 +19,8 @@ PROBE="${4:-}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.aspire/bin:$PATH"
+# Git Bash rewrites env values that look like POSIX paths (Rig__K6Script=/scripts/x.js) to C:/Program Files/Git/...
+export MSYS2_ENV_CONV_EXCL="Rig__"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 cd "$ROOT"

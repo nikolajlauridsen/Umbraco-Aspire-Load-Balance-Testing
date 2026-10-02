@@ -1,4 +1,5 @@
 using Aspire.Hosting.Yarp;
+using Aspire.Hosting.Yarp.Transforms;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -81,7 +82,11 @@ var gateway = builder.AddYarp("gateway")
         YarpCluster cluster = yarp
             .AddCluster("umbraco", nodes.Select(n => (object)n.GetEndpoint("http")).ToArray())
             .WithLoadBalancingPolicy("RoundRobin");
-        yarp.AddRoute("/{**catch-all}", cluster);
+        // Keep the browser-facing Host (localhost:8080). YARP otherwise sends the resolved destination host
+        // (aspire.dev.internal:500N), which Umbraco uses for absolute redirects such as the cookie login
+        // challenge and the OpenIddict issuer; the browser cannot resolve that name.
+        yarp.AddRoute("/{**catch-all}", cluster)
+            .WithTransformUseOriginalHostHeader();
     })
     .WithUrl(gatewayUrl + "/umbraco", "Backoffice via gateway");
 

@@ -4,7 +4,8 @@
 // probability (create / create+edit / create+publish / site create / site edit), with a random 1-5 s delay
 // before and 1 s after, every request through the round-robin gateway.
 //
-// Knobs (k6 env): VUS (150), ITERATIONS (1000), MAX_DURATION (60m), BRANCHES / PER_BRANCH (seed shape).
+// Knobs (k6 env): VUS (150), ITERATIONS (1000), MAX_DURATION (60m), BRANCHES / PER_BRANCH (seed shape),
+// ARTICLES_BRANCH / SITES_BRANCH (indexes of the seeded branches to create under; pick unused ones for a fresh, small sibling set).
 // Lock timeouts cannot be told apart from other failures on the API (a failed save is a 500 ProblemDetails);
 // count them from the node logs ("Content save operation failed" + "Failed to acquire ... lock").
 import http from 'k6/http';
@@ -38,6 +39,8 @@ const ITERATIONS = parseInt(__ENV.ITERATIONS || '1000', 10);
 const MAX_DURATION = __ENV.MAX_DURATION || '60m';
 const BRANCHES = parseInt(__ENV.BRANCHES || '200', 10);
 const PER_BRANCH = parseInt(__ENV.PER_BRANCH || '10', 10);
+const ARTICLES_BRANCH = parseInt(__ENV.ARTICLES_BRANCH || '0', 10);
+const SITES_BRANCH = parseInt(__ENV.SITES_BRANCH || '1', 10);
 
 const saveFailed = new Counter('save_failed_500');
 const conflict = new Counter('conflict_409');
@@ -69,9 +72,10 @@ export function setup() {
   const tree = http.get(`${NODES[0]}/umbraco/lb/tree`);
   if (tree.status !== 200) throw new Error(`tree failed: ${tree.status} ${tree.body}`);
   const body = tree.json();
-  if (!body.documentTypeKey || body.branches.length < 2) throw new Error('tree has no document type key or fewer than two branches');
+  const needed = Math.max(ARTICLES_BRANCH, SITES_BRANCH) + 1;
+  if (!body.documentTypeKey || body.branches.length < needed) throw new Error(`tree has no document type key or fewer than ${needed} branches`);
   // Articles all go under one parent, sites under another, as in the customer's tree.
-  return { articlesParent: body.branches[0].key, sitesParent: body.branches[1].key, documentType: body.documentTypeKey };
+  return { articlesParent: body.branches[ARTICLES_BRANCH].key, sitesParent: body.branches[SITES_BRANCH].key, documentType: body.documentTypeKey };
 }
 
 const probabilities = { createArticle: 20, editArticle: 50, publishArticle: 20, editSite: 5, createSite: 5 };

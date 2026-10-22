@@ -80,6 +80,17 @@ Rig knobs (AppHost config, overridable as env vars `Rig__...`): `NodeCount` (3),
   writer collision. A small bulk VU publishes reserved 10-page branches. Avoid publishing large branches in
   this scenario: one big `PublishBranch` holds the `ContentTree` write lock past the lowered 5 s read-lock
   timeout and makes every version fail, which hides the signal.
+- **Management API scenario.** `k6/management-api-mix.js` drives the real Management API with OAuth client
+  credentials: setup seeds the tree, calls `POST /umbraco/lb/api-user` (creates the `k6` API user in the admin group
+  and links client id `umbraco-back-office-k6`; the secret is the AppHost parameter `apiuser-client-secret`, forwarded to
+  nodes as `Rig__K6ClientSecret` and to k6 as `K6_CLIENT_SECRET`), then each VU takes a token from
+  `/umbraco/management/api/v1/security/back-office/token` and creates/edits/publishes documents through
+  `/umbraco/management/api/v1/document`. Prefer it over `client-mix.js` for anything meant to resemble editors; the
+  `/umbraco/lb` endpoints skip validation, property editors and OAuth. A failed save surfaces as a 500 ProblemDetails,
+  so lock timeouts are counted from the node logs, not from k6. Knobs: `VUS`, `ITERATIONS`, `MAX_DURATION`.
+  Node knobs added with it: `Rig__ThreadPoolMinThreads` (applies `ThreadPool.SetMinThreads`),
+  `Rig__LoadBalanceIsolatedCaches=false` (single-server mode); `/umbraco/lb/status` reports `threadPool` counters and
+  `isolatedCaches`; `SAMPLE_THREADPOOL=1 scripts/run-scenario.sh ...` samples them into `threadpool.jsonl`.
 - **Timing.** `InstructionProcessJob` starts 60 s after boot, then every 5 s. Start load at least ~70 s
   after boot when comparing versions, or the background sync is not yet running.
 

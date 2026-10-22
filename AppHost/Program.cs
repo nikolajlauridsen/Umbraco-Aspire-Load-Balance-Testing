@@ -32,6 +32,14 @@ var imagingHmac = builder.AddParameter(
     secret: true,
     persist: true);
 
+// Client secret for the k6 API user (Management API client-credentials flow); created on first boot and persisted.
+var k6ClientSecret = builder.AddParameter(
+    "apiuser-client-secret",
+    new GenerateParameterDefault { MinLength = 48, Special = false },
+    secret: true,
+    persist: true);
+const string k6ClientId = "umbraco-back-office-k6";
+
 var nodes = new List<IResourceBuilder<ProjectResource>>();
 for (int i = 1; i <= nodeCount; i++)
 {
@@ -47,6 +55,10 @@ for (int i = 1; i <= nodeCount; i++)
         .WithEnvironment("Rig__NodeName", name)
         .WithEnvironment("Rig__ServerRole", "SchedulingPublisher")
         .WithEnvironment("Rig__UseRedisDistributedCache", builder.Configuration["Rig:UseRedisDistributedCache"] ?? "true")
+        .WithEnvironment("Rig__ThreadPoolMinThreads", builder.Configuration["Rig:ThreadPoolMinThreads"] ?? "")
+        .WithEnvironment("Rig__LoadBalanceIsolatedCaches", builder.Configuration["Rig:LoadBalanceIsolatedCaches"] ?? "true")
+        .WithEnvironment("Rig__K6ClientSecret", k6ClientSecret)
+        .WithEnvironment("Rig__K6ClientId", k6ClientId)
         .WithEnvironment("Umbraco__CMS__Hosting__SiteName", name)
         .WithEnvironment("Umbraco__CMS__Hosting__MachineIdentifier", name)
         .WithEnvironment("Umbraco__CMS__Hosting__LocalTempStorageLocation", "EnvironmentTemp")
@@ -102,6 +114,8 @@ var k6 = builder.AddK6("k6")
     .WithScript(k6Script)
     .WithReference(gateway)
     .WithK6OtlpEnvironment()
+    .WithEnvironment("K6_CLIENT_SECRET", k6ClientSecret)
+    .WithEnvironment("K6_CLIENT_ID", k6ClientId)
     .WithExplicitStart();
 
 foreach (var node in nodes)

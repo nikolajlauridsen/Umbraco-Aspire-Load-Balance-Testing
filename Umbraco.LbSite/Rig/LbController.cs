@@ -5,10 +5,13 @@ using Umbraco.Cms.Core;
 using Umbraco.Cms.Core.Configuration;
 using Umbraco.Cms.Core.Configuration.Models;
 using Umbraco.Cms.Core.Models;
+using Umbraco.Cms.Core.Models.Membership;
+using Umbraco.Cms.Core.Security;
 using Umbraco.Cms.Core.Services;
 using Umbraco.Cms.Core.Services.OperationStatus;
 using Umbraco.Cms.Core.Strings;
 using Umbraco.Cms.Core.Sync;
+using Umbraco.Cms.Infrastructure.Security;
 
 namespace Umbraco.LbSite.Rig;
 
@@ -35,6 +38,9 @@ public sealed class LbController : ControllerBase
     private readonly IShortStringHelper _shortStringHelper;
     private readonly IUmbracoVersion _umbracoVersion;
     private readonly IConfiguration _configuration;
+    private readonly IUserService _userService;
+    private readonly IBackOfficeUserClientCredentialsManager _clientCredentialsManager;
+    private readonly IBackOfficeApplicationManager _applicationManager;
 
     public LbController(
         IRuntimeState runtimeState,
@@ -45,7 +51,10 @@ public sealed class LbController : ControllerBase
         IDataTypeService dataTypeService,
         IShortStringHelper shortStringHelper,
         IUmbracoVersion umbracoVersion,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IUserService userService,
+        IBackOfficeUserClientCredentialsManager clientCredentialsManager,
+        IBackOfficeApplicationManager applicationManager)
     {
         _runtimeState = runtimeState;
         _serverRoleAccessor = serverRoleAccessor;
@@ -56,6 +65,9 @@ public sealed class LbController : ControllerBase
         _shortStringHelper = shortStringHelper;
         _umbracoVersion = umbracoVersion;
         _configuration = configuration;
+        _userService = userService;
+        _clientCredentialsManager = clientCredentialsManager;
+        _applicationManager = applicationManager;
     }
 
     [HttpGet("status")]
@@ -69,6 +81,8 @@ public sealed class LbController : ControllerBase
             pid = Environment.ProcessId,
             machineIdentifier = _hostingSettings.Value.MachineIdentifier,
             version = _umbracoVersion.SemanticVersion.ToString(),
+            threadPool = ThreadPoolSnapshot(),
+            isolatedCaches = _configuration.GetValue("Rig:LoadBalanceIsolatedCaches", true),
         };
 
         return _runtimeState.Level == RuntimeLevel.Run
@@ -150,11 +164,12 @@ public sealed class LbController : ControllerBase
             .Select(branch => new
             {
                 id = branch.Id,
+                key = branch.Key,
                 pages = Children(branch.Id).Where(c => c.Published).Select(c => c.Id).ToArray(),
             })
             .ToArray();
 
-        return Ok(new { rootId = root.Id, branches });
+        return Ok(new { rootId = root.Id, rootKey = root.Key, documentTypeKey = _contentTypeService.Get(PageAlias)?.Key, branches });
     }
 
     /// <summary>
@@ -241,6 +256,99 @@ public sealed class LbController : ControllerBase
 
         OperationResult result = _contentService.MoveToRecycleBin(content);
         return Result(id, result.Success, result.Result.ToString());
+    }
+
+    /// <summary>
+    /// Ensures the API user k6 authenticates with through the Management API (client credentials), idempotently.
+    /// The secret comes from Rig:K6ClientSecret (an AppHost parameter), so it never travels in a URL or a script.
+    /// </summary>
+    [HttpPost("api-user")]
+    public async Task<IActionResult> ApiUser()
+    {
+        var secret = _configuration["Rig:K6ClientSecret"];
+        if (string.IsNullOrEmpty(secret))
+        {
+            return UnprocessableEntity(new { error = "Rig:K6ClientSecret is not configured; run through the AppHost." });
+        }
+
+        const string email = "k6@lb.local";
+        var clientId = _configuration["Rig:K6ClientId"] ?? "umbraco-back-office-k6";
+
+        IUser? user = _userService.GetByEmail(email);
+        if (user is null)
+        {
+            var created = await _userService.CreateAsync(
+                Constants.Security.SuperUserKey,
+                new UserCreateModel
+                {
+                    Email = email,
+                    UserName = email,
+                    Name = "k6",
+                    Kind = UserKind.Api,
+                    UserGroupKeys = new HashSet<Guid> { Constants.Security.AdminGroupKey },
+                },
+                approveUser: true);
+            if (created.Success is false || created.Result.CreatedUser is null)
+            {
+                return UnprocessableEntity(new { error = $"Creating the API user failed: {created.Status}" });
+            }
+
+            user = created.Result.CreatedUser;
+        }
+
+        IEnumerable<string> clientIds = await _clientCredentialsManager.GetClientIdsAsync(user.Key);
+        if (clientIds.Contains(clientId) is false)
+        {
+            var saved = await _clientCredentialsManager.SaveAsync(user.Key, clientId, secret);
+            if (saved.Success is false)
+            {
+                return UnprocessableEntity(new { error = $"Saving the client credentials failed: {saved.Result}" });
+            }
+        }
+        else
+        {
+            // Already linked: make sure the OpenIddict application carries the current secret.
+            await _applicationManager.EnsureBackOfficeClientCredentialsApplicationAsync(clientId, secret);
+        }
+
+        return Ok(new { clientId, userKey = user.Key, node = NodeName });
+    }
+
+    /// <summary>
+    /// Creates and saves a new page under a parent, as a backoffice "create document" does, and returns its id.
+    /// </summary>
+    [HttpPost("create/{parentId:int}")]
+    public IActionResult Create(int parentId)
+    {
+        IContentType? contentType = _contentTypeService.Get(PageAlias);
+        if (contentType is null)
+        {
+            return NotFound(new { error = $"Document type '{PageAlias}' does not exist; POST /umbraco/lb/seed first." });
+        }
+
+        var name = $"Perf {DateTime.UtcNow:O}";
+        IContent page = _contentService.Create(name, parentId, contentType.Alias);
+        page.SetValue("title", name);
+        OperationResult result = _contentService.Save(page);
+        var body = new { id = page.Id, node = NodeName, success = result.Success, status = result.Result.ToString() };
+        return result.Success ? Ok(body) : UnprocessableEntity(body);
+    }
+
+    private static object ThreadPoolSnapshot()
+    {
+        ThreadPool.GetMinThreads(out int minWorker, out int minIo);
+        ThreadPool.GetAvailableThreads(out int availableWorker, out int availableIo);
+        return new
+        {
+            threads = ThreadPool.ThreadCount,
+            pending = ThreadPool.PendingWorkItemCount,
+            completed = ThreadPool.CompletedWorkItemCount,
+            minWorker,
+            minIo,
+            availableWorker,
+            availableIo,
+            processors = Environment.ProcessorCount,
+        };
     }
 
     private IEnumerable<IContent> Children(int parentId)

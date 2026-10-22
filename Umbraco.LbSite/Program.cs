@@ -1,3 +1,4 @@
+using Umbraco.Cms.Core.DependencyInjection;
 using Microsoft.AspNetCore.DataProtection;
 using StackExchange.Redis;
 using Umbraco.Cms.Core.Routing;
@@ -10,11 +11,29 @@ string redisConnection = builder.Configuration.GetConnectionString("redis")
     ?? throw new InvalidOperationException("ConnectionStrings:redis is required; run through the AppHost.");
 string nodeName = builder.Configuration["Rig:NodeName"] ?? Environment.MachineName;
 
-builder.CreateUmbracoBuilder()
+// Rig:ThreadPoolMinThreads mirrors the <ThreadPoolMinThreads> runtimeconfig knob a site can set; it raises the
+// floor below which the pool injects threads slowly (~1-2 per second), which is what hides thread starvation.
+if (int.TryParse(builder.Configuration["Rig:ThreadPoolMinThreads"], out int minThreads) && minThreads > 0)
+{
+    ThreadPool.GetMinThreads(out int _, out int minIo);
+    bool applied = ThreadPool.SetMinThreads(minThreads, Math.Max(minIo, minThreads));
+    Console.WriteLine($"[rig] ThreadPool.SetMinThreads({minThreads}) applied={applied}");
+}
+
+IUmbracoBuilder umbracoBuilder = builder.CreateUmbracoBuilder()
     .AddBackOffice()
     .AddWebsite()
-    .AddComposers()
-    .LoadBalanceIsolatedCaches()
+    .AddComposers();
+
+// Rig:LoadBalanceIsolatedCaches=false runs the node as a single, non-load-balanced server would.
+bool isolatedCaches = builder.Configuration.GetValue("Rig:LoadBalanceIsolatedCaches", true);
+if (isolatedCaches)
+{
+    umbracoBuilder.LoadBalanceIsolatedCaches();
+}
+
+Console.WriteLine($"[rig] LoadBalanceIsolatedCaches={isolatedCaches}");
+umbracoBuilder
     .SetServerRegistrar(new EnvironmentServerRoleAccessor(builder.Configuration))
     .Build();
 

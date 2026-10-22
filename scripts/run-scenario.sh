@@ -29,7 +29,7 @@ strip() { sed 's/\x1b\[[0-9;]*m//g'; }
 log() { echo "[$(date -u +%T)] $*" | tee -a "$OUT/run.log"; }
 k6state() {
   aspire describe --non-interactive --format Json 2>/dev/null \
-    | python3 -c "import json,sys; print(next((r['state'] for r in json.load(sys.stdin)['resources'] if r['name'].startswith('k6')), 'missing'))"
+    | python3 -c "import json,sys; import re; print(next((r['state'] for r in json.load(sys.stdin)['resources'] if re.fullmatch(r'k6(-[a-z0-9]{8})?', r['name'])), 'missing'))"
 }
 
 # The node reports e.g. 17.8.0--rc.preview.102+6117125 for package 17.8.0--rc.preview.102.g6117125,
@@ -51,12 +51,13 @@ fi
 
 want="$(expected_prefix "$VERSION")"
 port=5001
+node_ports=()
 while status=$(curl -sf "http://localhost:$port/umbraco/lb/status"); do
   node=$(echo "$status" | python3 -c "import json,sys; print(json.load(sys.stdin)['node'])")
   echo "$status" > "$OUT/status-$node.json"
   got=$(echo "$status" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
   case "$got" in
-    "$want"*) log "$node runs $got" ;;
+    "$want"*) log "$node runs $got"; node_ports+=("$port") ;;
     *) log "ERROR: $node runs $got, expected $want"; exit 3 ;;
   esac
   port=$((port + 1))
@@ -66,6 +67,22 @@ done
 log "waiting 70 s for the instruction job"
 sleep 70
 
+# SAMPLE_THREADPOOL=1 records each node's thread-pool counters (from /umbraco/lb/status) every 2 s during k6.
+sampler_pid=""
+if [ -n "${SAMPLE_THREADPOOL:-}" ]; then
+  (
+    while true; do
+      ts=$(date -u +%T)
+      for p in "${node_ports[@]}"; do
+        s=$(curl -s --max-time 2 "http://localhost:$p/umbraco/lb/status") && echo "{\"ts\":\"$ts\",\"port\":$p,\"status\":$s}" >> "$OUT/threadpool.jsonl"
+      done
+      sleep 2
+    done
+  ) &
+  sampler_pid=$!
+  log "thread-pool sampler started (pid $sampler_pid)"
+fi
+
 aspire resource k6 start --non-interactive 2>&1 | strip | tail -1 | tee -a "$OUT/run.log"
 for _ in $(seq 1 180); do
   s=$(k6state)
@@ -73,6 +90,7 @@ for _ in $(seq 1 180); do
   sleep 10
 done
 log "k6 state: $s"
+[ -n "$sampler_pid" ] && kill "$sampler_pid" 2>/dev/null && log "thread-pool sampler stopped"
 
 aspire logs k6 --non-interactive 2>&1 | strip | grep -vE "running \(|^\[k6\] +[a-z]+ +[\[↓✓✗]|Scanning" > "$OUT/k6.txt"
 for n in $(ls "$OUT"/status-umb-*.json | sed -E 's#.*/status-(umb-[0-9]+)\.json#\1#'); do

@@ -39,7 +39,11 @@ script at AppHost start with `Rig__K6Script=/scripts/cache-sync-lock.js`; pass s
 `Rig__K6Env__<NAME>=<value>` (forwarded to the k6 container as env vars, read via `__ENV`).
 
 Rig knobs (AppHost config, overridable as env vars `Rig__...`): `NodeCount` (3), `GatewayPort` (8080),
-`FirstNodePort` (5001, node i gets 5000+i), `UseRedisDistributedCache` (true), `K6Script`, `K6Env:*`.
+`FirstNodePort` (5001, node i gets 5000+i), `UseRedisDistributedCache` (true), `LoadBalanceIsolatedCaches` (true),
+`ThreadPoolMinThreads`, `K6Script`, `K6Env:*` (k6 container env), `NodeEnv:*` (extra env for every node, `:` written
+as `__`, overrides the AppHost defaults; e.g. `Rig__NodeEnv__DOTNET_PROCESSOR_COUNT=2`,
+`Rig__NodeEnv__Umbraco__CMS__Global__DistributedLockingWriteLockDefaultTimeout=00:01:00`). README.md lists them
+with the k6 scenarios and their knobs.
 
 ## Architecture (the parts that span files)
 
@@ -70,7 +74,7 @@ Rig knobs (AppHost config, overridable as env vars `Rig__...`): `NodeCount` (3),
   `UmbracoRequestPathsOptions.IsBackOfficeRequest`; without it the path counts as a front-end plugin route and no
   test exercises the inline sync. Keep any new rig endpoint under that prefix.
 - **`/umbraco/lb` endpoints** (`Rig/LbController.cs`, anonymous): `status`, `seed`, `ids`, `tree`, `get/{id}`, `save/{id}?delayMs=`,
-  `publish/{id}`, `publish-branch/{id}`, `delete/{id}`. They call `IContentService` directly, which takes the
+  `publish/{id}`, `publish-branch/{id}`, `delete/{id}`, `create/{parentId}`, `api-user`. They call `IContentService` directly, which takes the
   same `ContentTree` locks as the Management API. `Rig/RigExceptionFilter.cs` maps "Cannot save a non-current
   version" to 409 and distributed lock timeouts to 503 so k6 can count them separately (`stale_version`,
   `read_lock_timeout`, `write_lock_timeout`); other operation failures return 422. `seed` is idempotent while
@@ -87,7 +91,11 @@ Rig knobs (AppHost config, overridable as env vars `Rig__...`): `NodeCount` (3),
   `/umbraco/management/api/v1/security/back-office/token` and creates/edits/publishes documents through
   `/umbraco/management/api/v1/document`. Prefer it over `client-mix.js` for anything meant to resemble editors; the
   `/umbraco/lb` endpoints skip validation, property editors and OAuth. A failed save surfaces as a 500 ProblemDetails,
-  so lock timeouts are counted from the node logs, not from k6. Knobs: `VUS`, `ITERATIONS`, `MAX_DURATION`.
+  so lock timeouts are counted from the node logs, not from k6. Knobs: `VUS`, `ITERATIONS`, `MAX_DURATION`,
+  `ARTICLES_BRANCH` / `SITES_BRANCH` (-1 creates a fresh published branch for the run), `TREE_READS`, and the two-phase
+  `WARMUP_DURATION` + `STEADY_DURATION` (`{scenario:steady}` sub-metrics). `k6/editor-read-mix.js` is the read-heavy
+  variant: `READERS` browsing the tree back to back while `WRITERS` run the mix (`DURATION`, `READ_THINK_MS`,
+  `WRITE_BRANCH`, `READ_BRANCHES`).
   Node knobs added with it: `Rig__ThreadPoolMinThreads` (applies `ThreadPool.SetMinThreads`),
   `Rig__LoadBalanceIsolatedCaches=false` (single-server mode); `/umbraco/lb/status` reports `threadPool` counters and
   `isolatedCaches`; `SAMPLE_THREADPOOL=1 scripts/run-scenario.sh ...` samples them into `threadpool.jsonl`.

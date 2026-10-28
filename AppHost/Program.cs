@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Aspire.Hosting.Yarp;
 using Aspire.Hosting.Yarp.Transforms;
 
@@ -78,6 +79,17 @@ for (int i = 1; i <= nodeCount; i++)
         .WithEnvironment("Umbraco__CMS__Unattended__UnattendedUserPassword", "LoadBalance-Admin-1234!")
         .WithHttpHealthCheck("/umbraco/lb/status")
         .WithUrl(string.Concat("http://localhost:", port.ToString(), "/umbraco"), $"{name} backoffice (direct)");
+
+    // Extra node environment, e.g. Rig__NodeEnv__DOTNET_PROCESSOR_COUNT=2 or
+    // Rig__NodeEnv__Umbraco__CMS__Global__DistributedLockingReadLockDefaultTimeout=00:01:00; a key set here
+    // overrides the defaults above.
+    foreach (var setting in builder.Configuration.GetSection("Rig:NodeEnv").AsEnumerable(makePathsRelative: true))
+    {
+        if (setting.Value is not null)
+        {
+            node.WithEnvironment(setting.Key.Replace(":", "__"), setting.Value);
+        }
+    }
 
     if (nodes.Count > 0)
     {
